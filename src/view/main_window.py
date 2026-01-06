@@ -132,15 +132,17 @@ class MainWindow(QMainWindow):
                 self.lbl_status.setStyleSheet("color: red;")
 
     def on_tab_changed(self, index):
-        """Sincroniza datos cuando el usuario cambia de pestaña"""
-        
-        # Si entra a Topología (Index 2)
-        if index == 2:
-            # Traer las moléculas definidas en Setup
-            mols = self.setup_tab.get_molecules_data()
-            self.topo_tab.update_project_data(self.project_mgr, mols)
-        
-        # Si entra a Simulación (Index 3)
-        if index == 3:
-            # Asegurar que tenga el project manager actualizado
-            self.sim_tab.update_project_data(self.project_mgr)
+            """Sincroniza datos cuando el usuario cambia de pestaña"""
+            
+            # Si entra a Topología (Index 2)
+            if index == 2:
+                # Traer moléculas Y EL TAMAÑO DE CAJA
+                mols = self.setup_tab.get_molecules_data()
+                box_angstrom = self.setup_tab.get_box_size_value() # <--- IMPORTANTE
+                
+                # Pasar todo a Topología (incluyendo el tamaño)
+                self.topo_tab.update_project_data(self.project_mgr, mols, box_size_angstrom=box_angstrom)
+            
+            # Si entra a Simulación (Index 3)
+            if index == 3:
+                self.sim_tab.update_project_data(self.project_mgr)

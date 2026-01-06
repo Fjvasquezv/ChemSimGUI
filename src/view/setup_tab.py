@@ -236,3 +236,7 @@ class SetupTab(QWidget):
 
     def get_molecules_data(self):
         return self.get_molecules_from_table()
+    
+    def get_box_size_value(self):
+        """Retorna el tamaño de la caja en Angstroms para usarlo en otras pestañas"""
+        return self.spin_box_size.value()
