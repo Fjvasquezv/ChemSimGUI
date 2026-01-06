@@ -34,3 +34,14 @@ class ProjectManager:
             path = os.path.join(self.current_project_path, "project_db.json")
             with open(path, 'w') as f:
                 json.dump(self.project_data, f, indent=4)
+                
+    def save_composition(self, molecules_list):
+        """Guarda la lista de moléculas en la BD del proyecto"""
+        if not self.current_project_path: return
+        
+        self.project_data["composition"] = molecules_list
+        self.save_db() # Escribir en project_db.json
+
+    def get_composition(self):
+        """Recupera la lista de moléculas"""
+        return self.project_data.get("composition", [])
