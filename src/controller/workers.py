@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 import subprocess
+import os
 
 class CommandWorker(QThread):
     log_signal = pyqtSignal(str)
@@ -10,7 +11,7 @@ class CommandWorker(QThread):
         self.command = command_list
         self.wd = working_dir
         self.input_file_path = input_file_path
-        self.process = None # Guardamos referencia al proceso
+        self.process = None
 
     def run(self):
         file_obj = None
@@ -22,44 +23,41 @@ class CommandWorker(QThread):
                     self.finished_signal.emit(False, f"Input no encontrado: {self.input_file_path}")
                     return
 
-            self.log_signal.emit(f"EJECUTANDO: {' '.join(self.command)}")
+            self.log_signal.emit(f"CMD: {' '.join(self.command)}")
             
-            # Iniciamos el proceso guardando la referencia en self.process
+            # Ejecución estándar (Estable)
             self.process = subprocess.Popen(
                 self.command,
                 cwd=self.wd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT, # Fusionar errores y output
                 stdin=file_obj,
-                text=True,
-                bufsize=1
+                text=True,    # Modo texto normal
+                bufsize=1     # Buffer de línea (estándar)
             )
 
-            # Leer salida
-            if self.process.stdout:
-                for line in self.process.stdout:
+            # Leer línea a línea
+            while True:
+                line = self.process.stdout.readline()
+                if not line and self.process.poll() is not None:
+                    break
+                if line:
                     self.log_signal.emit(line.strip())
-            
-            # Esperar a que termine
-            self.process.wait()
-            
+
+            rc = self.process.poll()
             if file_obj: file_obj.close()
 
-            # Verificar si fue exitoso o matado
-            if self.process.returncode == 0:
-                self.finished_signal.emit(True, "Proceso finalizado con éxito.")
-            elif self.process.returncode == -15 or self.process.returncode == -9:
+            if rc == 0:
+                self.finished_signal.emit(True, "Proceso finalizado correctamente.")
+            elif rc == -15:
                 self.finished_signal.emit(False, "Proceso detenido por el usuario.")
             else:
-                self.finished_signal.emit(False, f"Error: Código de salida {self.process.returncode}")
+                self.finished_signal.emit(False, f"Error: Código de salida {rc}")
 
         except Exception as e:
             if file_obj: file_obj.close()
             self.finished_signal.emit(False, f"Error crítico: {str(e)}")
 
     def stop_process(self):
-        """Mata el proceso actual si está corriendo"""
         if self.process and self.process.poll() is None:
-            self.log_signal.emit("!!! DETENIENDO PROCESO ... !!!")
-            self.process.terminate() # Señal SIGTERM (suave)
-            # self.process.kill()    # Señal SIGKILL (fuerte) si fuera necesario
+            self.process.terminate()

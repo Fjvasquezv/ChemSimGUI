@@ -58,3 +58,12 @@ class MdpManager:
         
         # Opcional: Si quisieras agregar claves que no existían, podrías hacerlo aquí
         return '\n'.join(new_lines)
+
+    def extract_parameters(self, content):
+        params = {}
+        for line in content.splitlines():
+            line = line.split(';')[0].strip()
+            if '=' in line:
+                k, v = line.split('=', 1)
+                params[k.strip()] = v.strip()
+        return params

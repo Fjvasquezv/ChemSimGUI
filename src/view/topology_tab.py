@@ -230,3 +230,63 @@ class TopologyTab(QWidget):
         
         if success: QMessageBox.information(self, "Éxito", "Topología generada.")
         else: QMessageBox.critical(self, "Error", msg)
+    
+    def get_state(self):
+        # Guardar mapeo de ITPs de la tabla
+        itp_mapping = {}
+        for i in range(self.table_mols.rowCount()):
+            pdb_name = self.table_mols.item(i, 0).text()
+            itp_item = self.table_mols.item(i, 2)
+            if itp_item and itp_item.text():
+                itp_mapping[pdb_name] = itp_item.text()
+
+        # Guardar globals
+        globals_list = [self.list_globals.item(i).text() for i in range(self.list_globals.count())]
+
+        return {
+            "forcefield": self.combo_ff.currentIndex(),
+            "sanitize": self.chk_sanitize.isChecked(),
+            "include_water": self.chk_water.isChecked(),
+            "global_includes": globals_list,
+            "itp_mapping": itp_mapping
+        }
+
+    def set_state(self, state):
+        if not state: return
+        
+        self.combo_ff.setCurrentIndex(state.get("forcefield", 0))
+        self.chk_sanitize.setChecked(state.get("sanitize", True))
+        self.chk_water.setChecked(state.get("include_water", False))
+        
+        # Restaurar lista globales
+        self.list_globals.clear()
+        for g in state.get("global_includes", []):
+            self.list_globals.addItem(g)
+            
+        # Nota: La tabla de moléculas se reconstruye sola cuando cambias de pestaña
+        # usando update_project_data, así que solo necesitamos guardar el mapeo de ITPs
+        # para restaurarlo cuando se llene la tabla. (Ver siguiente cambio)
+        self.saved_itp_mapping = state.get("itp_mapping", {})
+
+    # MODIFICAR refresh_table PARA USAR EL MAPEO GUARDADO
+    def refresh_table(self):
+        self.table_mols.setRowCount(len(self.molecules_data))
+        # Intentar recuperar mapeo guardado si existe
+        mapping = getattr(self, 'saved_itp_mapping', {})
+        
+        for i, mol in enumerate(self.molecules_data):
+            pdb = mol['pdb']
+            self.table_mols.setItem(i, 0, QTableWidgetItem(pdb))
+            guess = os.path.splitext(pdb)[0][:4].upper()
+            self.table_mols.setItem(i, 1, QTableWidgetItem(guess))
+            
+            # Restaurar ITP si ya lo habíamos asignado antes
+            prev_itp = mapping.get(pdb)
+            if prev_itp:
+                self.table_mols.setItem(i, 2, QTableWidgetItem(prev_itp))
+            else:
+                btn = QPushButton("Cargar .itp")
+                btn.clicked.connect(lambda ch, r=i: self.select_itp_mol(r))
+                self.table_mols.setCellWidget(i, 2, btn)
+    
+    
