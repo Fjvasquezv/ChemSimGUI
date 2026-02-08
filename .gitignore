@@ -7,3 +7,4 @@ __pycache__/
 *.xtc
 *.trr
 project_db.json
+.venv/
