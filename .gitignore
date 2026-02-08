@@ -8,3 +8,12 @@ __pycache__/
 *.trr
 project_db.json
 .venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+.DS_Store
+.coverage
