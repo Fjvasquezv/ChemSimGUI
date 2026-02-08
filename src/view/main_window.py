@@ -75,6 +75,11 @@ class MainWindow(QMainWindow):
         btn_del.clicked.connect(self.delete_system_dialog)
         h.addWidget(btn_del)
         
+        btn_rebuild = QPushButton("🔧 Reconstruir Árbol")
+        btn_rebuild.setStyleSheet("background-color: #ff9800; color: white;")
+        btn_rebuild.clicked.connect(self.rebuild_tree_dialog)
+        h.addWidget(btn_rebuild)
+        
         h.addStretch()
         self.lbl_path_info = QLabel("Ruta: -")
         h.addWidget(self.lbl_path_info)
@@ -193,6 +198,7 @@ class MainWindow(QMainWindow):
         
         # Cargar estado global
         self.comp_tab.set_state(self.project_mgr.get_global_state("comparative"))
+        self.sol_tab.set_state(self.project_mgr.get_global_state("solubility"))
 
     def refresh_systems_combo(self):
         self.combo_systems.blockSignals(True)
@@ -278,10 +284,40 @@ class MainWindow(QMainWindow):
         self.project_mgr.update_tab_state("simulation", self.sim_tab.get_state())
         self.project_mgr.update_tab_state("analysis", self.analysis_tab.get_state())
         self.project_mgr.update_global_state("comparative", self.comp_tab.get_state())
+        self.project_mgr.update_global_state("solubility", self.sol_tab.get_state())
         self.project_mgr.save_db()
 
     def enable_tabs(self, enable):
-        for i in range(1, 6): self.tabs.setTabEnabled(i, enable)
+        for i in range(1, 7): self.tabs.setTabEnabled(i, enable)
+    
+    def rebuild_tree_dialog(self):
+        """Abre un diálogo para reconstruir el árbol de un sistema o todos."""
+        if not self.project_mgr.current_project_path:
+            QMessageBox.warning(self, "Error", "No hay proyecto cargado.")
+            return
+        
+        # Crear diálogo de opciones
+        options = ["Sistema actual: " + (self.project_mgr.active_system_name or ""),
+                   "Todos los sistemas"]
+        
+        choice, ok = QInputDialog.getItem(
+            self, "Reconstruir Árbol",
+            "¿Qué sistema(s) reconstruir?",
+            options, 0, False
+        )
+        
+        if not ok:
+            return
+        
+        system_name = None if "Todos" in choice else self.project_mgr.active_system_name
+        
+        success, msg = self.project_mgr.rebuild_tree_from_storage(system_name)
+        
+        if success:
+            self.load_active_system_to_tabs()
+            QMessageBox.information(self, "Éxito", f"Árbol reconstruido:\n\n{msg}")
+        else:
+            QMessageBox.critical(self, "Error", f"Error reconstruyendo árbol:\n{msg}")
     
     def closeEvent(self, event):
         self.save_all_states()

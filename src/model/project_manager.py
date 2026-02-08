@@ -2,6 +2,7 @@ import os
 import shutil
 import json
 import copy
+import re
 from datetime import datetime
 
 class ProjectManager:
@@ -126,8 +127,25 @@ class ProjectManager:
     def save_db(self):
         if self.current_project_path:
             self.project_data["active_system"] = self.active_system_name
-            with open(os.path.join(self.current_project_path, "project_db.json"), 'w') as f:
-                json.dump(self.project_data, f, indent=4)
+            
+            # Guardado atómico para evitar corrupción
+            db_path = os.path.join(self.current_project_path, "project_db.json")
+            tmp_path = db_path + ".tmp"
+            
+            try:
+                with open(tmp_path, 'w') as f:
+                    json.dump(self.project_data, f, indent=4)
+                    
+                # Si se escribió bien, reemplazamos el original
+                # En Windows rename no es atómico si existe, pero aquí estamos en Linux
+                if os.path.exists(db_path):
+                    os.replace(tmp_path, db_path)
+                else:
+                    os.rename(tmp_path, db_path)
+            except Exception as e:
+                print(f"Error guardando DB: {e}")
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
     # --- GESTIÓN DE SISTEMAS ---
 
@@ -244,3 +262,154 @@ class ProjectManager:
     
     def get_system_list(self):
         return list(self.project_data.get("systems", {}).keys())
+
+    # =========================================================================
+    # RECONSTRUCCIÓN DE ÁRBOL (para recuperación de corrupción)
+    # =========================================================================
+
+    def rebuild_tree_from_storage(self, system_name=None):
+        """
+        Reconstruye el árbol de simulaciones (simulation_state.tree_data) escaneando
+        el directorio storage. Útil cuando el JSON se corrompe o los nodos se pierden.
+        
+        Args:
+            system_name: Si se especifica, solo reconstruye ese sistema. Si no, reconstruye todos.
+        
+        Returns:
+            Tupla (éxito: bool, mensaje: str)
+        """
+        if system_name:
+            systems_to_rebuild = [system_name]
+        else:
+            systems_to_rebuild = list(self.project_data.get("systems", {}).keys())
+        
+        VALID_SIM_PATTERN = re.compile(
+            r'^(minim|gen(?:\d+\.\d+)?|equil(?:\d+\.\d+)?|prod(?:\d+\.\d+(?:_rdf_batch_\d+_\d+)?)?)$'
+        )
+        
+        def is_valid_sim_name(name):
+            # Excluir cualquier nombre que contenga _prev
+            if '_prev' in name:
+                return False
+            return bool(VALID_SIM_PATTERN.match(name))
+        
+        def extract_temp(name):
+            match = re.search(r'(\d{3,4})', name)
+            if match:
+                return int(match.group(1))
+            if name in ('gen', 'equil', 'prod'):
+                return 253
+            return None
+        
+        def build_tree(storage_path):
+            """Construye el árbol para un sistema desde su directorio storage."""
+            nodes_by_name = {}
+            nodes_list = []
+            
+            if not os.path.isdir(storage_path):
+                return nodes_list
+            
+            seen_bases = set()
+            for fname in os.listdir(storage_path):
+                base = fname
+                for ext in ['.cpt', '.edr', '.gro', '.log', '.mdp', '.tpr', '.xtc', '.xvg']:
+                    if fname.endswith(ext):
+                        base = fname[:-len(ext)]
+                        break
+                
+                if not is_valid_sim_name(base) or base in seen_bases:
+                    continue
+                seen_bases.add(base)
+                
+                temp = extract_temp(base)
+                node_type = 'minim'
+                if base.startswith('gen'):
+                    node_type = 'gen'
+                elif base.startswith('equil'):
+                    node_type = 'nvt'
+                elif base.startswith('prod'):
+                    node_type = 'prod'
+                
+                node = {
+                    'name': base,
+                    'type': node_type,
+                    'status': 'Completado',
+                    'children': [],
+                    'temperature': temp
+                }
+                
+                nodes_by_name[base] = node
+                if node_type == 'minim':
+                    nodes_list.append(node)
+            
+            # Construir jerarquía: minim -> gen -> equil -> prod
+            minim_node = None
+            for name, node in nodes_by_name.items():
+                if node['type'] == 'minim':
+                    minim_node = node
+                    break
+            
+            if not minim_node:
+                return nodes_list
+            
+            # Adjuntar gen nodes a minim
+            gen_nodes = {n: nd for n, nd in nodes_by_name.items() if nd['type'] == 'gen'}
+            for gen_name in sorted(gen_nodes.keys()):
+                gen_node = gen_nodes[gen_name]
+                minim_node['children'].append(gen_node)
+                
+                # Adjuntar equil nodes a gen (matching temperature)
+                gen_temp = gen_node.get('temperature')
+                equil_nodes = {n: nd for n, nd in nodes_by_name.items()
+                              if nd['type'] == 'nvt' and nd.get('temperature') == gen_temp}
+                for equil_name in sorted(equil_nodes.keys()):
+                    equil_node = equil_nodes[equil_name]
+                    if equil_node not in gen_node['children']:
+                        gen_node['children'].append(equil_node)
+                        
+                        # Adjuntar prod nodes a equil (matching temperature)
+                        equil_temp = equil_node.get('temperature')
+                        prod_nodes = {n: nd for n, nd in nodes_by_name.items()
+                                    if nd['type'] == 'prod' and nd.get('temperature') == equil_temp}
+                        for prod_name in sorted(prod_nodes.keys()):
+                            prod_node = prod_nodes[prod_name]
+                            if prod_node not in equil_node['children']:
+                                equil_node['children'].append(prod_node)
+            
+            return nodes_list
+        
+        # Reconstruir árboles
+        try:
+            summary = {}
+            for sys_name in systems_to_rebuild:
+                if sys_name not in self.project_data.get("systems", {}):
+                    continue
+                
+                sys_data = self.project_data["systems"][sys_name]
+                storage_path = os.path.join(self.current_project_path, "storage", sys_name)
+                
+                old_tree = sys_data.get("simulation_state", {}).get("tree_data", [])
+                new_tree = build_tree(storage_path)
+                
+                old_count = sum(1 + len(n.get('children', [])) for n in old_tree)
+                new_count = sum(1 + len(n.get('children', [])) for n in new_tree)
+                
+                summary[sys_name] = {"old": old_count, "new": new_count}
+                
+                # Actualizar árbol
+                if "simulation_state" not in sys_data:
+                    sys_data["simulation_state"] = {}
+                sys_data["simulation_state"]["tree_data"] = new_tree
+            
+            # Guardar cambios
+            self.save_db()
+            
+            # Mensaje de resumen
+            msg = "Árboles reconstruidos:\n"
+            for sys, counts in summary.items():
+                msg += f"  {sys}: {counts['old']} → {counts['new']} nodos\n"
+            
+            return True, msg.strip()
+        
+        except Exception as e:
+            return False, f"Error reconstruyendo árbol: {e}"
